@@ -31,9 +31,11 @@ jobs:
         id: official
         run: |
           docker inspect --format='{{index .RepoDigests 0}}' $LOCAL_TAG | cut -d'@' -f2 > official_digest.txt
-          cat official_digest.txt
+          CURRENT_DIGEST=$(cat official_digest.txt)
+          echo "CURRENT_DIGEST=$CURRENT_DIGEST" >> $GITHUB_ENV
+          echo "Current digest: $CURRENT_DIGEST"
 
-      - name: Try to download previous digest (optional)
+      - name: Download last known digest artifact (if any)
         id: download-artifact
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -41,38 +43,34 @@ jobs:
           name: node-alpine-version
           path: ./
 
-      - name: Read previous digest (if exists)
+      - name: Compare with previous digest
         id: compare
         run: |
-          if [ -f alpine-version.txt ]; then
-            echo "PREVIOUS_DIGEST=$(cat alpine-version.txt)" >> $GITHUB_ENV
+          if [[ -f alpine-version.txt ]]; then
+            PREVIOUS_DIGEST=$(cat alpine-version.txt)
+            echo "PREVIOUS_DIGEST=$PREVIOUS_DIGEST" >> $GITHUB_ENV
+            echo "Previous digest: $PREVIOUS_DIGEST"
           else
-            echo "No previous artifact found. First run."
             echo "PREVIOUS_DIGEST=none" >> $GITHUB_ENV
+            echo "No previous digest found, assuming first run."
           fi
 
       - name: Compare and push if different
         id: push-image
         run: |
-          CURRENT_DIGEST=$(cat official_digest.txt)
-          echo "Current: $CURRENT_DIGEST"
-          echo "Previous: $PREVIOUS_DIGEST"
-          
-          if [ "$PREVIOUS_DIGEST" = "$CURRENT_DIGEST" ]; then
+          if [[ "$PREVIOUS_DIGEST" == "$CURRENT_DIGEST" ]]; then
             echo "No update needed."
             echo "updated=false" >> $GITHUB_OUTPUT
           else
-            echo "Image updated or first time run. Pushing to ECR..."
+            echo "Digest changed or first run. Pushing to ECR..."
             docker tag $LOCAL_TAG ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:$IMAGE_TAG
             docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:$IMAGE_TAG
-            echo $CURRENT_DIGEST > alpine-version.txt
             echo "updated=true" >> $GITHUB_OUTPUT
           fi
-        env:
-          PREVIOUS_DIGEST: ${{ env.PREVIOUS_DIGEST }}
+          # Save current digest for artifact
+          echo "$CURRENT_DIGEST" > alpine-version.txt
 
-      - name: Upload digest for future runs
-        if: steps.push-image.outputs.updated == 'true'
+      - name: Upload current digest artifact (always)
         uses: actions/upload-artifact@v4
         with:
           name: node-alpine-version
