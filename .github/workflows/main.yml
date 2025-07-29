@@ -8,13 +8,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Fetch node:alpine digest from Docker Hub
+      - name: Authenticate and fetch Docker Hub token
+        id: get-token
+        run: |
+          TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" | jq -r '.token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Fetch node:alpine digest using token
+        id: get-digest
         run: |
           mkdir -p output
-          curl -s -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-            https://registry-1.docker.io/v2/library/node/manifests/alpine \
-            | jq -r '.config.digest' > output/node-alpine-digest.txt
-          echo "Digest stored in output/node-alpine-digest.txt"
+          DIGEST=$(curl -s -H "Authorization: Bearer ${{ steps.get-token.outputs.token }}" \
+                        -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                        https://registry-1.docker.io/v2/library/node/manifests/alpine \
+                        | jq -r '.config.digest')
+          echo "$DIGEST" > output/node-alpine-digest.txt
+          echo "Digest: $DIGEST"
 
       - name: Upload digest as artifact
         uses: actions/upload-artifact@v4
