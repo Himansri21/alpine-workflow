@@ -1,87 +1,79 @@
-name: ECR Node Alpine Updater
+name: Check and Push Node Alpine Image
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # Runs daily at midnight
-  workflow_dispatch:     # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
-  check-and-update:
+  check-and-update-image:
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-central-1
+      ECR_REPO: your-ecr-repo-name
+      IMAGE_TAG: node-alpine
+      LOCAL_TAG: node:alpine
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
+          mask-password: true
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: Get Latest Node Alpine Tag
-        id: latest_tag
+      - name: Pull latest official image
+        run: docker pull $LOCAL_TAG
+
+      - name: Get current digest of official image
+        id: official
         run: |
-          latest=$(curl -s https://registry.hub.docker.com/v2/repositories/library/node/tags | jq -r '.results[] | select(.name | contains("alpine")) | .name' | sort -Vr | head -n 1)
-          echo "latest_tag=$latest" >> $GITHUB_OUTPUT
+          docker inspect --format='{{index .RepoDigests 0}}' $LOCAL_TAG | cut -d'@' -f2 > official_digest.txt
+          cat official_digest.txt
 
-      - name: Download Previous Version Artifact (if any)
+      - name: Try to download previous digest (optional)
+        id: download-artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: node-alpine-version
-          path: .
+          path: ./
 
-      - name: Load Previous Version
-        id: load_version
-        run: |
-          if [ -f "version.txt" ]; then
-            previous=$(cat version.txt)
-            echo "previous_version=$previous" >> $GITHUB_OUTPUT
-          else
-            echo "previous_version=none" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Compare Versions
+      - name: Read previous digest (if exists)
         id: compare
         run: |
-          echo "Previous: ${{ steps.load_version.outputs.previous_version }}"
-          echo "Latest: ${{ steps.latest_tag.outputs.latest_tag }}"
-          if [ "${{ steps.load_version.outputs.previous_version }}" = "${{ steps.latest_tag.outputs.latest_tag }}" ]; then
-            echo "up_to_date=true" >> $GITHUB_OUTPUT
+          if [ -f alpine-version.txt ]; then
+            echo "PREVIOUS_DIGEST=$(cat alpine-version.txt)" >> $GITHUB_ENV
           else
-            echo "up_to_date=false" >> $GITHUB_OUTPUT
+            echo "No previous artifact found. First run."
+            echo "PREVIOUS_DIGEST=none" >> $GITHUB_ENV
           fi
 
-      - name: Exit if Already Up-to-Date
-        if: steps.compare.outputs.up_to_date == 'true'
-        run: echo "Node Alpine image is up to date. Exiting."
-
-      - name: Pull Latest Node Alpine Image
-        if: steps.compare.outputs.up_to_date == 'false'
+      - name: Compare and push if different
+        id: push-image
         run: |
-          docker pull node:${{ steps.latest_tag.outputs.latest_tag }}
-
-      - name: Tag and Push to ECR
-        if: steps.compare.outputs.up_to_date == 'false'
+          CURRENT_DIGEST=$(cat official_digest.txt)
+          echo "Current: $CURRENT_DIGEST"
+          echo "Previous: $PREVIOUS_DIGEST"
+          
+          if [ "$PREVIOUS_DIGEST" = "$CURRENT_DIGEST" ]; then
+            echo "No update needed."
+            echo "updated=false" >> $GITHUB_OUTPUT
+          else
+            echo "Image updated or first time run. Pushing to ECR..."
+            docker tag $LOCAL_TAG ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:$IMAGE_TAG
+            docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:$IMAGE_TAG
+            echo $CURRENT_DIGEST > alpine-version.txt
+            echo "updated=true" >> $GITHUB_OUTPUT
+          fi
         env:
-          AWS_REGION: eu-central-1
-          ECR_REPO: your-ecr-repo-name
-        run: |
-          account_id=$(aws sts get-caller-identity --query Account --output text)
-          ecr_url=$account_id.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO
-          docker tag node:${{ steps.latest_tag.outputs.latest_tag }} $ecr_url:node-${{ steps.latest_tag.outputs.latest_tag }}
-          docker push $ecr_url:node-${{ steps.latest_tag.outputs.latest_tag }}
+          PREVIOUS_DIGEST: ${{ env.PREVIOUS_DIGEST }}
 
-      - name: Save Current Version
-        if: steps.compare.outputs.up_to_date == 'false'
-        run: echo "${{ steps.latest_tag.outputs.latest_tag }}" > version.txt
-
-      - name: Upload New Version Artifact
-        if: steps.compare.outputs.up_to_date == 'false'
+      - name: Upload digest for future runs
+        if: steps.push-image.outputs.updated == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: node-alpine-version
-          path: version.txt
+          path: alpine-version.txt
