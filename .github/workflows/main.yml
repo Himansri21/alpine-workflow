@@ -1,70 +1,83 @@
-name: Check and Push Latest Alpine Image to ECR
+name: ECR Node Alpine Updater
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # Every day at 2 AM UTC
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # Runs daily at midnight
+  workflow_dispatch:     # Allows manual trigger
 
 jobs:
-  update-alpine:
+  check-and-update:
     runs-on: ubuntu-latest
-
-    env:
-      AWS_REGION: ap-south-1                    # Change to your region
-      ECR_REPO_NAME: cedar-server               # Change to your ECR repo name
-      AWS_ACCOUNT_ID: 123456789012              # Change to your AWS account ID
-
     steps:
-      - name: Checkout Repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq awscli
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
 
-      - name: Fetch Latest Alpine Version from Docker Hub
-        id: get_latest_alpine
-        run: |
-          latest_tag=$(curl -s https://registry.hub.docker.com/v2/repositories/library/alpine/tags |
-            jq -r '.results[].name' |
-            grep -E '^[0-9]+\.[0-9]+$' |
-            sort -Vr |
-            head -n1)
-          echo "Latest Alpine tag: $latest_tag"
-          echo "tag=$latest_tag" >> $GITHUB_OUTPUT
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Check if Tag Exists in ECR
-        id: check_ecr
+      - name: Get Latest Node Alpine Tag
+        id: latest_tag
         run: |
-          tag="${{ steps.get_latest_alpine.outputs.tag }}"
-          echo "Checking for tag: $tag"
-          tags=$(aws ecr describe-images \
-            --repository-name $ECR_REPO_NAME \
-            --region $AWS_REGION \
-            --query 'imageDetails[].imageTags[]' \
-            --output text || echo "")
+          latest=$(curl -s https://registry.hub.docker.com/v2/repositories/library/node/tags | jq -r '.results[] | select(.name | contains("alpine")) | .name' | sort -Vr | head -n 1)
+          echo "latest_tag=$latest" >> $GITHUB_OUTPUT
 
-          echo "ECR Tags: $tags"
-          if echo "$tags" | grep -qw "$tag"; then
-            echo "Tag $tag already exists in ECR."
-            echo "push_needed=false" >> $GITHUB_OUTPUT
+      - name: Download Previous Version Artifact (if any)
+        uses: actions/download-artifact@v4
+        with:
+          name: node-alpine-version
+          path: .
+
+      - name: Load Previous Version
+        id: load_version
+        run: |
+          if [ -f "version.txt" ]; then
+            previous=$(cat version.txt)
+            echo "previous_version=$previous" >> $GITHUB_OUTPUT
           else
-            echo "Tag $tag not found in ECR."
-            echo "push_needed=true" >> $GITHUB_OUTPUT
-            echo "new_tag=$tag" >> $GITHUB_OUTPUT
+            echo "previous_version=none" >> $GITHUB_OUTPUT
           fi
 
-      - name: Login to ECR
-        if: steps.check_ecr.outputs.push_needed == 'true'
+      - name: Compare Versions
+        id: compare
         run: |
-          aws ecr get-login-password --region $AWS_REGION | \
-          docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          echo "Previous: ${{ steps.load_version.outputs.previous_version }}"
+          echo "Latest: ${{ steps.latest_tag.outputs.latest_tag }}"
+          if [ "${{ steps.load_version.outputs.previous_version }}" = "${{ steps.latest_tag.outputs.latest_tag }}" ]; then
+            echo "up_to_date=true" >> $GITHUB_OUTPUT
+          else
+            echo "up_to_date=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Pull, Tag, and Push New Alpine Version to ECR
-        if: steps.check_ecr.outputs.push_needed == 'true'
+      - name: Exit if Already Up-to-Date
+        if: steps.compare.outputs.up_to_date == 'true'
+        run: echo "Node Alpine image is up to date. Exiting."
+
+      - name: Pull Latest Node Alpine Image
+        if: steps.compare.outputs.up_to_date == 'false'
         run: |
-          tag="${{ steps.check_ecr.outputs.new_tag }}"
-          docker pull alpine:$tag
-          docker tag alpine:$tag $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$tag
-          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$tag
+          docker pull node:${{ steps.latest_tag.outputs.latest_tag }}
+
+      - name: Tag and Push to ECR
+        if: steps.compare.outputs.up_to_date == 'false'
+        env:
+          AWS_REGION: eu-central-1
+          ECR_REPO: your-ecr-repo-name
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          ecr_url=$account_id.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO
+          docker tag node:${{ steps.latest_tag.outputs.latest_tag }} $ecr_url:node-${{ steps.latest_tag.outputs.latest_tag }}
+          docker push $ecr_url:node-${{ steps.latest_tag.outputs.latest_tag }}
+
+      - name: Save Current Version
+        if: steps.compare.outputs.up_to_date == 'false'
+        run: echo "${{ steps.latest_tag.outputs.latest_tag }}" > version.txt
+
+      - name: Upload New Version Artifact
+        if: steps.compare.outputs.up_to_date == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-alpine-version
+          path: version.txt
