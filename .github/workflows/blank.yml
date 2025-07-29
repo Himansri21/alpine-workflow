@@ -1,0 +1,49 @@
+name: Get Latest Node Alpine Version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  get-node-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Get latest node:alpine version
+        id: fetch-version
+        run: |
+          #!/bin/bash
+          set -e
+
+          # Step 1: Get Docker Hub auth token
+          TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" | jq -r .token)
+
+          # Step 2: Get manifest for node:alpine
+          MANIFEST=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            https://registry-1.docker.io/v2/library/node/manifests/alpine)
+
+          # Step 3: Get config blob digest
+          CONFIG_DIGEST=$(echo "$MANIFEST" | jq -r .config.digest)
+
+          # Step 4: Fetch config blob
+          CONFIG=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            https://registry-1.docker.io/v2/library/node/blobs/$CONFIG_DIGEST)
+
+          # Step 5: Extract NODE_VERSION from env
+          NODE_VERSION=$(echo "$CONFIG" | jq -r '.config.Env[]' | grep NODE_VERSION | cut -d= -f2)
+
+          # Output it
+          echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_OUTPUT
+
+          # Save to file
+          mkdir -p output
+          echo "$NODE_VERSION" > output/node-alpine-version.txt
+
+      - name: Upload version as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-alpine-version
+          path: output/node-alpine-version.txt
