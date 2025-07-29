@@ -17,6 +17,8 @@ jobs:
 
       - name: Log in to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
+        env:
+          AWS_REGION: eu-central-1
 
       - name: Get Latest Node Alpine Tag
         id: latest_tag
