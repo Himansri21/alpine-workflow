@@ -1,28 +1,70 @@
-name: check and push the latest alpine 
+name: Check and Push Latest Alpine Image to ECR
 
 on:
-  Schedule:
-    - cron : "0 0 * * *"
+  schedule:
+    - cron: '0 2 * * *'  # Every day at 2 AM UTC
   workflow_dispatch:
 
 jobs:
   update-alpine:
     runs-on: ubuntu-latest
 
-    env: 
-      AWS-REGION: eu-central-1
-      ECR_REPO_NAME: cedar-server               
-      AWS_ACCOUNT_ID: 123456789012
-
+    env:
+      AWS_REGION: ap-south-1                    # Change to your region
+      ECR_REPO_NAME: cedar-server               # Change to your ECR repo name
+      AWS_ACCOUNT_ID: 123456789012              # Change to your AWS account ID
 
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Install dependencies 
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq awscli
 
-      - name: Fetch Latest Alpine version from Docker Hub
-        id : get_latest_alpine    
+      - name: Fetch Latest Alpine Version from Docker Hub
+        id: get_latest_alpine
+        run: |
+          latest_tag=$(curl -s https://registry.hub.docker.com/v2/repositories/library/alpine/tags |
+            jq -r '.results[].name' |
+            grep -E '^[0-9]+\.[0-9]+$' |
+            sort -Vr |
+            head -n1)
+          echo "Latest Alpine tag: $latest_tag"
+          echo "tag=$latest_tag" >> $GITHUB_OUTPUT
+
+      - name: Check if Tag Exists in ECR
+        id: check_ecr
+        run: |
+          tag="${{ steps.get_latest_alpine.outputs.tag }}"
+          echo "Checking for tag: $tag"
+          tags=$(aws ecr describe-images \
+            --repository-name $ECR_REPO_NAME \
+            --region $AWS_REGION \
+            --query 'imageDetails[].imageTags[]' \
+            --output text || echo "")
+
+          echo "ECR Tags: $tags"
+          if echo "$tags" | grep -qw "$tag"; then
+            echo "Tag $tag already exists in ECR."
+            echo "push_needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $tag not found in ECR."
+            echo "push_needed=true" >> $GITHUB_OUTPUT
+            echo "new_tag=$tag" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Login to ECR
+        if: steps.check_ecr.outputs.push_needed == 'true'
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+          docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Pull, Tag, and Push New Alpine Version to ECR
+        if: steps.check_ecr.outputs.push_needed == 'true'
+        run: |
+          tag="${{ steps.check_ecr.outputs.new_tag }}"
+          docker pull alpine:$tag
+          docker tag alpine:$tag $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$tag
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME:$tag
