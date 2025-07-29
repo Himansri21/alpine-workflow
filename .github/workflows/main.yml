@@ -1,32 +1,68 @@
-name: Get Node Alpine Digest and Upload
+name: Sync Node Alpine Image
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"  # Runs daily at 2 AM UTC
 
 jobs:
-  fetch-and-upload:
+  check-and-update-node-alpine:
     runs-on: ubuntu-latest
 
+    env:
+      AWS_REGION: eu-central-1
+      ECR_REPO: cedar-server
+
     steps:
-      - name: Authenticate and fetch Docker Hub token
-        id: get-token
-        run: |
-          TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" | jq -r '.token')
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+      - name: Checkout (needed even if not used)
+        uses: actions/checkout@v4
 
-      - name: Fetch node:alpine digest using token
-        id: get-digest
-        run: |
-          mkdir -p output
-          DIGEST=$(curl -s -H "Authorization: Bearer ${{ steps.get-token.outputs.token }}" \
-                        -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-                        https://registry-1.docker.io/v2/library/node/manifests/alpine \
-                        | jq -r '.config.digest')
-          echo "$DIGEST" > output/node-alpine-digest.txt
-          echo "Digest: $DIGEST"
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Upload digest as artifact
-        uses: actions/upload-artifact@v4
+      - name: Fetch Latest Node Alpine Tag
+        id: dockerhub
+        run: |
+          TAGS=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/node/tags/?page_size=100" | jq -r '.results[].name')
+          LATEST_TAG=$(echo "$TAGS" | grep -E '^[0-9]+-alpine$' | sort -Vr | head -n 1)
+          NODE_VERSION=$(echo $LATEST_TAG | cut -d'-' -f1)
+          echo "Latest Node Alpine Tag: $LATEST_TAG"
+          echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          name: node-alpine-digest
-          path: output/node-alpine-digest.txt
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Check if ECR tag already exists
+        id: check-ecr
+        run: |
+          set -e
+          TAG=${{ steps.dockerhub.outputs.FULL_TAG }}
+          IMAGE_EXISTS=$(aws ecr describe-images \
+            --repository-name $ECR_REPO \
+            --image-ids imageTag=$TAG \
+            --region $AWS_REGION \
+            --query 'imageDetails[0].imageTags[0]' \
+            --output text || echo "NOT_FOUND")
+          echo "ECR_IMAGE_TAG=$IMAGE_EXISTS" >> "$GITHUB_OUTPUT"
+
+      - name: Pull, Tag, and Push to ECR (if not exists)
+        if: steps.check-ecr.outputs.ECR_IMAGE_TAG == 'NOT_FOUND'
+        run: |
+          TAG=${{ steps.dockerhub.outputs.FULL_TAG }}
+          echo "Pulling node:$TAG"
+          docker pull node:$TAG
+          docker tag node:$TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+
+      - name: Skip Push (if already up-to-date)
+        if: steps.check-ecr.outputs.ECR_IMAGE_TAG != 'NOT_FOUND'
+        run: echo "Image already up-to-date in ECR. Skipping push."
