@@ -8,6 +8,9 @@ on:
 jobs:
   check-and-update-node-alpine:
     runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.push-result.outputs.pushed }}
+      new_tag: ${{ steps.dockerhub.outputs.FULL_TAG }}
 
     env:
       AWS_REGION: eu-central-1
@@ -30,29 +33,6 @@ jobs:
           | head -n 1)
           echo "Latest Node Alpine Tag: $LATEST_TAG"
           echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-          echo "$LATEST_TAG" > latest_tag.txt
-
-      - name: Upload tag artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: latest-node-alpine-tag
-          path: latest_tag.txt
-
-      - name: Download previous tag artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: latest-node-alpine-tag
-        continue-on-error: true
-
-      - name: Read previous tag
-        id: read-prev
-        run: |
-          if [[ -f latest_tag.txt ]]; then
-            PREV_TAG=$(cat latest_tag.txt)
-            echo "PREVIOUS_TAG=$PREV_TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "PREVIOUS_TAG=" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -68,7 +48,6 @@ jobs:
       - name: Check if ECR tag already exists
         id: check-ecr
         run: |
-          set -e
           TAG=${{ steps.dockerhub.outputs.FULL_TAG }}
           IMAGE_EXISTS=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
@@ -78,27 +57,38 @@ jobs:
             --output text || echo "NOT_FOUND")
           echo "ECR_IMAGE_TAG=$IMAGE_EXISTS" >> "$GITHUB_OUTPUT"
 
-      - name: Pull, Tag, and Push to ECR (if not exists)
-        if: steps.check-ecr.outputs.ECR_IMAGE_TAG == 'NOT_FOUND'
+      - name: Pull, Tag, and Push to ECR
+        id: push-result
         run: |
           TAG=${{ steps.dockerhub.outputs.FULL_TAG }}
-          echo "Pulling node:$TAG"
-          docker pull node:$TAG
-          docker tag node:$TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
-          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+          if [ "${{ steps.check-ecr.outputs.ECR_IMAGE_TAG }}" = "NOT_FOUND" ]; then
+            echo "New version detected. Syncing..."
+            docker pull node:$TAG
+            docker tag node:$TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+            docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Image already up-to-date. Skipping push."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Notify Slack of New Push
-        if: steps.check-ecr.outputs.ECR_IMAGE_TAG == 'NOT_FOUND'
-        uses: slackapi/slack-github-action@v2
-        with:
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
-          method: chat.postMessage
-          payload: |
-            channel: "#production-alerts"
-            text: |
-              "channel": "${{ secrets.SLACK_CHANNEL_NAME }}",
-              "text": "✅ *Node Alpine Updated*: New version `${{ steps.dockerhub.outputs.FULL_TAG }}` has been pushed to ECR repo `${{ env.ECR_REPO }}`."
+  notify-slack:
+       name: Notify Slack
+       needs: check-and-update-node-alpine
+       if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
+       runs-on: ubuntu-latest
+       environment: autoscaler-monitoring
 
-      - name: Skip Push (if already up-to-date)
-        if: steps.check-ecr.outputs.ECR_IMAGE_TAG != 'NOT_FOUND'
-        run: echo "Image already up-to-date in ECR. Skipping push."
+       steps:
+        - name: Notify Slack about new Node Alpine version
+          uses: slackapi/slack-github-action@v2
+          with:
+            token: ${{ secrets.SLACK_BOT_TOKEN }}
+            method: chat.postMessage
+            payload: |
+              {
+                "channel": "#production-alerts",
+                "text": "✅ *Node Alpine Updated!*\nNew version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ env.ECR_REPO }}`."
+              }
+
+
