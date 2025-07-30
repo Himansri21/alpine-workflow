@@ -89,15 +89,15 @@ jobs:
 
       - name: Notify Slack of New Push
         if: steps.check-ecr.outputs.ECR_IMAGE_TAG == 'NOT_FOUND'
-        uses: slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@v2
         with:
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          method: chat.postMessage
           payload: |
-            {
+            channel: "#production-alerts"
+            text: |
               "channel": "${{ secrets.SLACK_CHANNEL_NAME }}",
               "text": "✅ *Node Alpine Updated*: New version `${{ steps.dockerhub.outputs.FULL_TAG }}` has been pushed to ECR repo `${{ env.ECR_REPO }}`."
-            }
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
 
       - name: Skip Push (if already up-to-date)
         if: steps.check-ecr.outputs.ECR_IMAGE_TAG != 'NOT_FOUND'
