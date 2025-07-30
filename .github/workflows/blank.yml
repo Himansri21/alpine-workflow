@@ -51,6 +51,11 @@ jobs:
           fi
           echo "previous=$previous_tag" >> $GITHUB_OUTPUT
 
+      - name: Debug tag values
+        run: |
+          echo "Latest tag: ${{ steps.get_latest.outputs.latest }}"
+          echo "Previous tag: ${{ steps.get_previous.outputs.previous }}"
+
   store-latest-tag:
     name: Store Latest Tag as Artifact
     needs: check-autoscaler
