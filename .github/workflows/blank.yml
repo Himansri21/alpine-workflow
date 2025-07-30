@@ -90,7 +90,7 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           method: chat.postMessage
           payload: |
-            channel: "#your-channel-name"
+            channel: "#production-alerts"
             text: |
               :tada: *New Cluster Autoscaler Release Detected!*
               A new version ${{ needs.check-autoscaler.outputs.latest }} is available.
