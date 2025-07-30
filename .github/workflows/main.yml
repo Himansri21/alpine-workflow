@@ -92,13 +92,13 @@ jobs:
           echo "Tag: ${{ needs.check-and-update-node-alpine.outputs.new_tag }}"
           echo "Repo: ${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}"
 
-      - name: Notify Slack about new Node Alpine version
+      - name: Send Slack notification
         uses: slackapi/slack-github-action@v2
         with:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           method: chat.postMessage
-          channel: "#production-alerts"
-          text: |
-            ✅ *Node Alpine Updated!*
-            New version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`.
-
+          payload: |
+            {
+              "channel": "#production-alerts",
+              "text": "✅ *Node Alpine Updated!*\n\nNew version \`24.4.1-alpine\` has been pushed to ECR repo \`${{ env.ECR_REPO }}\`."
+            }
