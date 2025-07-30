@@ -14,7 +14,7 @@ jobs:
       ECR_REPO: my-alpine-node-image
 
     steps:
-      - name: Checkout (needed even if not used)
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install jq
@@ -86,6 +86,18 @@ jobs:
           docker pull node:$TAG
           docker tag node:$TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
           docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+
+      - name: Notify Slack of New Push
+        if: steps.check-ecr.outputs.ECR_IMAGE_TAG == 'NOT_FOUND'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "channel": "${{ secrets.SLACK_CHANNEL_NAME }}",
+              "text": "✅ *Node Alpine Updated*: New version `${{ steps.dockerhub.outputs.FULL_TAG }}` has been pushed to ECR repo `${{ env.ECR_REPO }}`."
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
 
       - name: Skip Push (if already up-to-date)
         if: steps.check-ecr.outputs.ECR_IMAGE_TAG != 'NOT_FOUND'
