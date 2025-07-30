@@ -97,7 +97,7 @@ jobs:
         with:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
           method: chat.postMessage
-          payload: |
+          payload: >
             {
               "channel": "#production-alerts",
               "text": "✅ *Node Alpine Updated!*\n\nNew version \`24.4.1-alpine\` has been pushed to ECR repo \`${{ env.ECR_REPO }}\`."
