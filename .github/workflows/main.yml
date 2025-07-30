@@ -23,12 +23,13 @@ jobs:
       - name: Fetch Latest Node Alpine Tag
         id: dockerhub
         run: |
-          TAGS=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/node/tags/?page_size=100" | jq -r '.results[].name')
-          LATEST_TAG=$(echo "$TAGS" | grep -E '^[0-9]+-alpine$' | sort -Vr | head -n 1)
-          NODE_VERSION=$(echo $LATEST_TAG | cut -d'-' -f1)
-          echo "Latest Node Alpine Tag: $LATEST_TAG"
-          echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          LATEST_TAG=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/node/tags/?page_size=100" \
+          | jq -r '.results[].name' \
+          | grep -E '^[0-9]+(\.[0-9]+)*-alpine$' \
+          | sort -Vr \
+          | head -n 1)
+            echo "Latest Node Alpine Tag: $LATEST_TAG"
+            echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
