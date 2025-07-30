@@ -71,6 +71,7 @@ jobs:
           else
             echo "Image already up-to-date. Skipping push."
             echo "pushed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set ECR Repo Name Output
         id: set-ecr-repo
