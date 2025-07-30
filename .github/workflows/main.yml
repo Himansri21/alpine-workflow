@@ -11,7 +11,7 @@ jobs:
 
     env:
       AWS_REGION: eu-central-1
-      ECR_REPO: cedar-server
+      ECR_REPO: my-alpine-node-image
 
     steps:
       - name: Checkout (needed even if not used)
@@ -28,8 +28,31 @@ jobs:
           | grep -E '^[0-9]+(\.[0-9]+)*-alpine$' \
           | sort -Vr \
           | head -n 1)
-            echo "Latest Node Alpine Tag: $LATEST_TAG"
-            echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest Node Alpine Tag: $LATEST_TAG"
+          echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "$LATEST_TAG" > latest_tag.txt
+
+      - name: Upload tag artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-node-alpine-tag
+          path: latest_tag.txt
+
+      - name: Download previous tag artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: latest-node-alpine-tag
+        continue-on-error: true
+
+      - name: Read previous tag
+        id: read-prev
+        run: |
+          if [[ -f latest_tag.txt ]]; then
+            PREV_TAG=$(cat latest_tag.txt)
+            echo "PREVIOUS_TAG=$PREV_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "PREVIOUS_TAG=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
