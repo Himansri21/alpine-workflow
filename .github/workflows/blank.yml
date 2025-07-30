@@ -1,49 +1,68 @@
-name: Get Latest Node Alpine Version
+name: Monitor Cluster Autoscaler Version
 
 on:
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+env:
+  ARTIFACT_NAME: previous-autoscaler-tag
+  ARTIFACT_FILENAME: previous_autoscaler_tag.txt
+
 jobs:
-  get-node-version:
+  check-autoscaler:
+    name: Check Cluster Autoscaler Version
+    runs-on: ubuntu-latest
+
+    outputs:
+      latest: ${{ steps.get_latest.outputs.latest }}
+      previous: ${{ steps.get_previous.outputs.previous }}
+      notify: ${{ steps.decide.outputs.notify }}
+
+    steps:
+
+      - name: Get latest cluster-autoscaler tag
+        id: get_latest
+        run: |
+          latest_tag=$(curl -s https://api.github.com/repos/kubernetes/autoscaler/releases | \
+            jq -r '.[].tag_name' | \
+            grep -E '^cluster-autoscaler-[0-9]+\.[0-9]+\.[0-9]+$' | \
+            sort -V | \
+            tail -n1)
+          echo "latest=$latest_tag" >> $GITHUB_OUTPUT
+
+      - name: Download previous tag artifact (if exists)
+        id: download_previous
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+        continue-on-error: true  # in case it's the first run
+
+      - name: Read previous version (or default to 0)
+        id: get_previous
+        run: |
+          if [[ -f "${{ env.ARTIFACT_FILENAME }}" ]]; then
+            previous_tag=$(cat "${{ env.ARTIFACT_FILENAME }}")
+          else
+            previous_tag="0"
+          fi
+          echo "previous=$previous_tag" >> $GITHUB_OUTPUT
+
+  store-latest-tag:
+    name: Store Latest Tag as Artifact
+    needs: check-autoscaler
+    if: needs.check-autoscaler.outputs.notify == 'true'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install jq
-        run: sudo apt-get install -y jq
+      - name: Write latest tag to file
+        run: echo "${{ needs.check-autoscaler.outputs.latest }}" > ${{ env.ARTIFACT_FILENAME }}
 
-      - name: Get latest node:alpine version
-        id: fetch-version
-        run: |
-          #!/bin/bash
-          set -e
-
-          # Step 1: Get Docker Hub auth token
-          TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull" | jq -r .token)
-
-          # Step 2: Get manifest for node:alpine
-          MANIFEST=$(curl -s -H "Authorization: Bearer $TOKEN" \
-            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-            https://registry-1.docker.io/v2/library/node/manifests/alpine)
-
-          # Step 3: Get config blob digest
-          CONFIG_DIGEST=$(echo "$MANIFEST" | jq -r .config.digest)
-
-          # Step 4: Fetch config blob
-          CONFIG=$(curl -s -H "Authorization: Bearer $TOKEN" \
-            https://registry-1.docker.io/v2/library/node/blobs/$CONFIG_DIGEST)
-
-          # Step 5: Extract NODE_VERSION from env
-          NODE_VERSION=$(echo "$CONFIG" | jq -r '.config.Env[]' | grep NODE_VERSION | cut -d= -f2)
-
-          # Output it
-          echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_OUTPUT
-
-          # Save to file
-          mkdir -p output
-          echo "$NODE_VERSION" > output/node-alpine-version.txt
-
-      - name: Upload version as artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: node-alpine-version
-          path: output/node-alpine-version.txt
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_FILENAME }}
