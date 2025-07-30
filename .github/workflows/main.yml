@@ -11,6 +11,7 @@ jobs:
     outputs:
       pushed: ${{ steps.push-result.outputs.pushed }}
       new_tag: ${{ steps.dockerhub.outputs.FULL_TAG }}
+      ecr_repo: ${{ steps.set-ecr-repo.outputs.ecr_repo }}
 
     env:
       AWS_REGION: eu-central-1
@@ -70,25 +71,33 @@ jobs:
           else
             echo "Image already up-to-date. Skipping push."
             echo "pushed=false" >> "$GITHUB_OUTPUT"
-          fi
+
+      - name: Set ECR Repo Name Output
+        id: set-ecr-repo
+        run: echo "ecr_repo=${{ env.ECR_REPO }}" >> "$GITHUB_OUTPUT"
 
   notify-slack:
-       name: Notify Slack
-       needs: check-and-update-node-alpine
-       if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
-       runs-on: ubuntu-latest
-       environment: autoscaler-monitoring
+    name: Notify Slack
+    needs: check-and-update-node-alpine
+    if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
 
-       steps:
-        - name: Notify Slack about new Node Alpine version
-          uses: slackapi/slack-github-action@v2
-          with:
-            token: ${{ secrets.SLACK_BOT_TOKEN }}
-            method: chat.postMessage
-            payload: |
-              {
-                "channel": "#production-alerts",
-                "text": "✅ *Node Alpine Updated!*\nNew version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`."
-              }
+    env:
+      ECR_REPO: my-alpine-node-image
 
+    steps:
+      - name: Debug Outputs
+        run: |
+          echo "Tag: ${{ needs.check-and-update-node-alpine.outputs.new_tag }}"
+          echo "Repo: ${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}"
+
+      - name: Notify Slack about new Node Alpine version
+        uses: slackapi/slack-github-action@v2
+        with:
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          method: chat.postMessage
+          channel: "#production-alerts"
+          text: |
+            ✅ *Node Alpine Updated!*
+            New version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`.
 
