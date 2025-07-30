@@ -15,6 +15,7 @@ jobs:
     outputs:
       latest: ${{ steps.get_latest.outputs.latest }}
       previous: ${{ steps.get_previous.outputs.previous }}
+      notify: ${{ steps.decide.outputs.notify }}
 
     steps:
       - name: Get latest cluster-autoscaler tag
@@ -44,14 +45,25 @@ jobs:
           fi
           echo "previous=$previous_tag" >> $GITHUB_OUTPUT
 
+      - name: Decide if notification needed
+        id: decide
+        run: |
+          if [[ "${{ steps.get_latest.outputs.latest }}" != "${{ steps.get_previous.outputs.previous }}" ]]; then
+            echo "notify=true" >> $GITHUB_OUTPUT
+          else
+            echo "notify=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Debug tag values
         run: |
           echo "Latest tag: ${{ steps.get_latest.outputs.latest }}"
           echo "Previous tag: ${{ steps.get_previous.outputs.previous }}"
+          echo "Notify: ${{ steps.decide.outputs.notify }}"
 
   store-latest-tag:
     name: Store Latest Tag as Artifact
     needs: check-autoscaler
+    if: needs.check-autoscaler.outputs.notify == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -63,3 +75,23 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.ARTIFACT_FILENAME }}
+
+  notify-slack:
+    name: Notify Slack
+    needs: check-autoscaler
+    if: needs.check-autoscaler.outputs.notify == 'true'
+    runs-on: ubuntu-latest
+    environment: autoscaler-monitoring
+
+    steps:
+      - name: Send Slack Message
+        uses: slackapi/slack-github-action@v2
+        with:
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          method: chat.postMessage
+          payload: |
+            channel: "#your-channel-name"
+            text: |
+              :tada: *New Cluster Autoscaler Release Detected!*
+              A new version ${{ needs.check-autoscaler.outputs.latest }} is available.
+              Please check: https://github.com/kubernetes/autoscaler/releases/tag/${{ needs.check-autoscaler.outputs.latest }}
