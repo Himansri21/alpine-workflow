@@ -1,12 +1,7 @@
 name: Monitor Cluster Autoscaler Version
 
 on:
-  schedule:
-    - cron: '0 0 * * *'
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 env:
   ARTIFACT_NAME: previous-autoscaler-tag
@@ -20,10 +15,8 @@ jobs:
     outputs:
       latest: ${{ steps.get_latest.outputs.latest }}
       previous: ${{ steps.get_previous.outputs.previous }}
-      notify: ${{ steps.decide.outputs.notify }}
 
     steps:
-
       - name: Get latest cluster-autoscaler tag
         id: get_latest
         run: |
@@ -39,7 +32,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
-        continue-on-error: true  # in case it's the first run
+        continue-on-error: true
 
       - name: Read previous version (or default to 0)
         id: get_previous
@@ -59,7 +52,6 @@ jobs:
   store-latest-tag:
     name: Store Latest Tag as Artifact
     needs: check-autoscaler
-    if: needs.check-autoscaler.outputs.notify == 'true'
     runs-on: ubuntu-latest
 
     steps:
