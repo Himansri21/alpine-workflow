@@ -2,8 +2,6 @@ name: Monitor Cluster Autoscaler Version
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 0 * * *" 
     
 env:
   ARTIFACT_NAME: previous-autoscaler-tag
