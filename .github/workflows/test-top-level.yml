@@ -6,7 +6,10 @@ on:
       account-id:
         description: 'Select AWS Account ID to deploy to'
         required: true
-        type: string
+        type: choice
+        options:
+          - "676206900064"
+          - "444455556666"
   workflow_call:
 
 permissions:
