@@ -2,6 +2,11 @@ name: Top-most-level
 
 on:
   workflow_dispatch:
+    inputs:
+      account-id:
+        description: 'Select AWS Account ID to deploy to'
+        required: true
+        type: string
   workflow_call:
 
 permissions:
@@ -11,3 +16,5 @@ permissions:
 jobs:
   test-sync:
     uses: ./.github/workflows/test_sync_node.yml
+    with:
+      account-id: ${{ inputs.account-id }}
