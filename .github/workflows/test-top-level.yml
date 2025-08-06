@@ -2,13 +2,6 @@ name: Top-most-level
 
 on:
   workflow_dispatch:
-    inputs:
-      account-id:
-        description: 'Select AWS Account ID to deploy to'
-        required: true
-        type: choice
-        options:
-          
   workflow_call:
 
 permissions:
