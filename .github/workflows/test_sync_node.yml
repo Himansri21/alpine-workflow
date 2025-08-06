@@ -5,4 +5,4 @@ on:
 
 jobs:
   test-sync:
-    uses: ./.github/workflows/sync_node_alpine.yml
+    uses: ./.github/workflows/main.yml
