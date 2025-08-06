@@ -2,7 +2,12 @@ name: Sync Node Alpine Image
 
 on:
   workflow_dispatch:
-  workflow_call: 
+  workflow_call:
+    inputs:
+      account-id:
+        description: 'AWS Account ID to assume role into'
+        required: true
+        type: string
   
 
 jobs:
@@ -42,7 +47,7 @@ jobs:
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: arn:aws:iam::676206900064:role/GitHubAction-AssumeRoleWithOIDC #change to reflect your IAM role’s ARN
+          role-to-assume: arn:aws:iam::${{ inputs.account-id }}:role/GitHubAction-AssumeRoleWithOIDC #change to reflect your IAM role’s ARN
           role-session-name: GitHub_to_AWS_via_FederatedOIDC
           aws-region: ${{ env.AWS_REGION }}
 
