@@ -33,10 +33,11 @@ jobs:
           echo "Latest Node Alpine Tag: $LATEST_TAG"
           echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v1.7.0
         with:
-          role-to-assume: arn:aws:iam::676206900064:role/GitHubAction-AssumeRoleWithOIDC
+          role-to-assume: arn:aws:iam::676206900064:role/GitHubAction-AssumeRoleWithOIDC #change to reflect your IAM role’s ARN
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
