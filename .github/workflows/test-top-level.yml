@@ -1,5 +1,13 @@
+name: Test Sync Node Alpine OIDC Workflow
+
 on:
-  push:
-    branches:
-    - main
-    - release/*
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-sync:
+    uses: ./.github/workflows/test_sync_node.yml
