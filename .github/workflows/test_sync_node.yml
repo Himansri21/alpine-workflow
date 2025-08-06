@@ -1,0 +1,8 @@
+name: Test Sync Node Alpine OIDC Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-sync:
+    uses: ./.github/workflows/sync_node_alpine.yml
