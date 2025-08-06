@@ -75,27 +75,27 @@ jobs:
         id: set-ecr-repo
         run: echo "ecr_repo=${{ env.ECR_REPO }}" >> "$GITHUB_OUTPUT"
 
-  notify-slack:
-    name: Notify Slack
-    needs: check-and-update-node-alpine
-    if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
-    runs-on: ubuntu-latest
-    env:
-      ECR_REPO: my-alpine-node-image
+  # notify-slack:
+  #   name: Notify Slack
+  #   needs: check-and-update-node-alpine
+  #   if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     ECR_REPO: my-alpine-node-image
 
-    steps:
-      - name: Debug Outputs
-        run: |
-          echo "Tag: ${{ needs.check-and-update-node-alpine.outputs.new_tag }}"
-          echo "Repo: ${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}"
+  #   steps:
+  #     - name: Debug Outputs
+  #       run: |
+  #         echo "Tag: ${{ needs.check-and-update-node-alpine.outputs.new_tag }}"
+  #         echo "Repo: ${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}"
 
-      - name: Send Slack notification
-        uses: slackapi/slack-github-action@v2
-        with:
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
-          method: chat.postMessage
-          payload: >-
-            {
-              "channel": "#production-alerts",
-              "text": "✅ *Node Alpine Updated!*\n\nNew version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`."
-            }
+  #     - name: Send Slack notification
+  #       uses: slackapi/slack-github-action@v2
+  #       with:
+  #         token: ${{ secrets.SLACK_BOT_TOKEN }}
+  #         method: chat.postMessage
+  #         payload: >-
+  #           {
+  #             "channel": "#production-alerts",
+  #             "text": "✅ *Node Alpine Updated!*\n\nNew version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`."
+  #           }
