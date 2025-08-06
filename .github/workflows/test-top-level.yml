@@ -20,4 +20,4 @@ jobs:
   test-sync:
     uses: ./.github/workflows/test_sync_node.yml
     with:
-      account-id: ${{ inputs.account-id }}
+      account-id: ${{ inputs.account-id || '676206900064' }}
