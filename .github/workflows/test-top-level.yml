@@ -8,8 +8,7 @@ on:
         required: true
         type: choice
         options:
-          - "676206900064"
-          - "444455556666"
+          
   workflow_call:
 
 permissions:
