@@ -1,4 +1,4 @@
-name: Test Sync Node Alpine OIDC Workflow
+name: Top-most-level
 
 on:
   workflow_dispatch:
