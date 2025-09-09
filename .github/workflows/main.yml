@@ -5,10 +5,17 @@ on:
   workflow_call:
     inputs:
       account-id:
-        description: 'AWS Account ID to assume role into'
+        description: AWS Account ID to assume role into
         required: true
         type: string
-  
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  ECR_REPO: my-alpine-node-image
 
 jobs:
   check-and-update-node-alpine:
@@ -16,15 +23,7 @@ jobs:
     outputs:
       pushed: ${{ steps.push-result.outputs.pushed }}
       new_tag: ${{ steps.dockerhub.outputs.FULL_TAG }}
-      ecr_repo: ${{ steps.set-ecr-repo.outputs.ecr_repo }}
-
-    env:
-      AWS_REGION: eu-central-1
-      ECR_REPO: my-alpine-node-image
-
-    permissions:
-      id-token: write   # This is required for requesting the JWT
-      contents: read    # This is required for actions/checkout
+      ecr_repo: ${{ env.ECR_REPO }}
 
     steps:
       - name: Checkout
@@ -35,78 +34,84 @@ jobs:
 
       - name: Fetch Latest Node Alpine Tag
         id: dockerhub
+        shell: bash
         run: |
           LATEST_TAG=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/node/tags/?page_size=100" \
-          | jq -r '.results[].name' \
-          | grep -E '^[0-9]+(\.[0-9]+)*-alpine$' \
-          | sort -Vr \
-          | head -n 1)
+            | jq -r '.results[].name' \
+            | grep -E '^[0-9]+(\.[0-9]+)*-alpine$' \
+            | sort -Vr \
+            | head -n 1)
+          if [[ -z "$LATEST_TAG" || "$LATEST_TAG" == "null" ]]; then
+            echo "Failed to fetch latest tag" >&2
+            exit 1
+          fi
           echo "Latest Node Alpine Tag: $LATEST_TAG"
           echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ inputs.account-id }}:role/GitHubAction-AssumeRoleWithOIDC #change to reflect your IAM role’s ARN
+          role-to-assume: arn:aws:iam::${{ inputs.account-id }}:role/GitHubAction-AssumeRoleWithOIDC
           role-session-name: GitHub_to_AWS_via_FederatedOIDC
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Check if ECR tag already exists
         id: check-ecr
+        shell: bash
         run: |
-          TAG=${{ steps.dockerhub.outputs.FULL_TAG }}
+          TAG="${{ steps.dockerhub.outputs.FULL_TAG }}"
+          set +e
           IMAGE_EXISTS=$(aws ecr describe-images \
-            --repository-name $ECR_REPO \
-            --image-ids imageTag=$TAG \
-            --region $AWS_REGION \
+            --repository-name "$ECR_REPO" \
+            --image-ids imageTag="$TAG" \
+            --region "$AWS_REGION" \
             --query 'imageDetails[0].imageTags[0]' \
-            --output text || echo "NOT_FOUND")
-          echo "ECR_IMAGE_TAG=$IMAGE_EXISTS" >> "$GITHUB_OUTPUT"
+            --output text 2>/dev/null)
+          set -e
+          if [[ -z "$IMAGE_EXISTS" || "$IMAGE_EXISTS" == "None" ]]; then
+            echo "ECR_IMAGE_TAG=NOT_FOUND" >> "$GITHUB_OUTPUT"
+          else
+            echo "ECR_IMAGE_TAG=$IMAGE_EXISTS" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Pull, Tag, and Push to ECR
         id: push-result
+        shell: bash
         run: |
-          TAG=${{ steps.dockerhub.outputs.FULL_TAG }}
+          TAG="${{ steps.dockerhub.outputs.FULL_TAG }}"
           if [ "${{ steps.check-ecr.outputs.ECR_IMAGE_TAG }}" = "NOT_FOUND" ]; then
             echo "New version detected. Syncing..."
-            docker pull node:$TAG
-            docker tag node:$TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
-            docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG
+            docker pull "node:$TAG"
+            docker tag "node:$TAG" "${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG"
+            docker push "${{ steps.login-ecr.outputs.registry }}/$ECR_REPO:$TAG"
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           else
             echo "Image already up-to-date. Skipping push."
             echo "pushed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set ECR Repo Name Output
-        id: set-ecr-repo
-        run: echo "ecr_repo=${{ env.ECR_REPO }}" >> "$GITHUB_OUTPUT"
+  notify-slack:
+    name: Notify Slack
+    needs: check-and-update-node-alpine
+    if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug Outputs
+        run: |
+          echo "Tag: ${{ needs.check-and-update-node-alpine.outputs.new_tag }}"
+          echo "Repo: ${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}"
 
-  # notify-slack:
-  #   name: Notify Slack
-  #   needs: check-and-update-node-alpine
-  #   if: needs.check-and-update-node-alpine.outputs.pushed == 'true'
-  #   runs-on: ubuntu-latest
-  #   env:
-  #     ECR_REPO: my-alpine-node-image
-
-  #   steps:
-  #     - name: Debug Outputs
-  #       run: |
-  #         echo "Tag: ${{ needs.check-and-update-node-alpine.outputs.new_tag }}"
-  #         echo "Repo: ${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}"
-
-  #     - name: Send Slack notification
-  #       uses: slackapi/slack-github-action@v2
-  #       with:
-  #         token: ${{ secrets.SLACK_BOT_TOKEN }}
-  #         method: chat.postMessage
-  #         payload: >-
-  #           {
-  #             "channel": "#production-alerts",
-  #             "text": "✅ *Node Alpine Updated!*\n\nNew version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`."
-  #           }
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v2
+        with:
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          method: chat.postMessage
+          payload: |
+            {
+              "channel": "#production-alerts",
+              "text": "✅ *Node Alpine Updated!*\n\nNew version `${{ needs.check-and-update-node-alpine.outputs.new_tag }}` has been pushed to ECR repo `${{ needs.check-and-update-node-alpine.outputs.ecr_repo }}`."
+            }
