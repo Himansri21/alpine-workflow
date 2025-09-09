@@ -36,17 +36,50 @@ jobs:
         id: dockerhub
         shell: bash
         run: |
-          LATEST_TAG=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/node/tags/?page_size=100" \
-            | jq -r '.results[].name' \
-            | grep -E '^[0-9]+(\.[0-9]+)*-alpine$' \
-            | sort -Vr \
-            | head -n 1)
-          if [[ -z "$LATEST_TAG" || "$LATEST_TAG" == "null" ]]; then
-            echo "Failed to fetch latest tag" >&2
+          set -euo pipefail
+
+          BASE_URL="https://registry.hub.docker.com/v2/repositories/library/node/tags/"
+          PARAMS="?page_size=100&ordering=last_updated"
+          NEXT_URL="${BASE_URL}${PARAMS}"
+          LATEST_TAG=""
+
+          for _ in {1..5}; do
+            # fetch page with status
+            HTTP_CODE=$(curl -sS -w "%{http_code}" -o /tmp/node_tags.json "$NEXT_URL")
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "Docker Hub API returned HTTP $HTTP_CODE for $NEXT_URL" >&2
+            # common causes: 429 rate limit, 5xx transient
             exit 1
           fi
+
+          # temporarily disable pipefail so grep/head not matching doesn't fail the step
+          set +o pipefail
+          CANDIDATE=$(jq -r '.results[].name' /tmp/node_tags.json \
+          | grep -E '^[0-9]+(\.[0-9]+)*-alpine$' \
+          | sort -Vr \
+          | head -n 1 || true)
+          set -o pipefail
+
+          if [[ -n "${CANDIDATE:-}" ]]; then
+            LATEST_TAG="$CANDIDATE"
+            break
+          fi
+
+          # follow pagination if present
+          NEXT_URL=$(jq -r '.next // empty' /tmp/node_tags.json)
+          if [[ -z "${NEXT_URL:-}" ]]; then
+          break
+          fi
+          done
+
+          if [[ -z "${LATEST_TAG:-}" || "$LATEST_TAG" == "null" ]]; then
+            echo "Failed to determine latest node:*-alpine tag from Docker Hub (no match found)." >&2
+          exit 1
+          fi
+
           echo "Latest Node Alpine Tag: $LATEST_TAG"
           echo "FULL_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
