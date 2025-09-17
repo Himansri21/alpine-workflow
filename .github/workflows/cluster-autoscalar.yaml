@@ -1,23 +1,22 @@
-name: Monitor Cluster Autoscaler Version (Gist Test)
+name: Monitor Cluster Autoscaler Version (Auto Gist)
 
 on:
-  workflow_dispatch: # manual trigger for testing
-  # uncomment below if you want it scheduled daily
+  workflow_dispatch: # manual trigger
   # schedule:
-  #   - cron: "0 3 * * *" # runs daily at 03:00 UTC
+  #   - cron: "0 3 * * *" # optional: run daily at 03:00 UTC
 
 env:
   GIST_FILE: previous_autoscaler_tag.txt
 
 jobs:
   check-autoscaler:
-    name: Check Cluster Autoscaler Version
     runs-on: ubuntu-latest
 
     outputs:
       latest: ${{ steps.get_latest.outputs.latest }}
       previous: ${{ steps.get_previous.outputs.previous }}
       notify: ${{ steps.decide.outputs.notify }}
+      gist_id: ${{ steps.ensure_gist.outputs.gist_id }}
 
     steps:
       - name: Get latest cluster-autoscaler tag
@@ -30,12 +29,38 @@ jobs:
             tail -n1)
           echo "latest=$latest_tag" >> $GITHUB_OUTPUT
 
+      - name: Ensure gist exists (create if missing)
+        id: ensure_gist
+        run: |
+          # Try to fetch gist ID from repo variables (if set)
+          gist_id="${{ secrets.GIST_ID }}"
+          if [[ -z "$gist_id" ]]; then
+            echo "No GIST_ID secret set, creating new gist..."
+            create_response=$(curl -s -X POST \
+              -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
+              -d "{\"files\": {\"${{ env.GIST_FILE }}\": {\"content\": \"0\"}}, \"public\": false}" \
+              https://api.github.com/gists)
+
+            gist_id=$(echo "$create_response" | jq -r '.id')
+
+            if [[ -z "$gist_id" || "$gist_id" == "null" ]]; then
+              echo "❌ Failed to create gist"
+              exit 1
+            fi
+
+            echo "✅ Created gist: $gist_id"
+          else
+            echo "✅ Using existing gist: $gist_id"
+          fi
+
+          echo "gist_id=$gist_id" >> $GITHUB_OUTPUT
+
       - name: Get previous version from gist
         id: get_previous
         run: |
           previous_tag=$(curl -s \
             -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
-            https://api.github.com/gists/${{ secrets.GIST_ID }} \
+            https://api.github.com/gists/${{ steps.ensure_gist.outputs.gist_id }} \
             | jq -r '.files["${{ env.GIST_FILE }}"].content')
 
           if [[ -z "$previous_tag" || "$previous_tag" == "null" ]]; then
@@ -57,6 +82,7 @@ jobs:
           echo "Latest tag: ${{ steps.get_latest.outputs.latest }}"
           echo "Previous tag: ${{ steps.get_previous.outputs.previous }}"
           echo "Notify: ${{ steps.decide.outputs.notify }}"
+          echo "Gist ID: ${{ steps.ensure_gist.outputs.gist_id }}"
 
   update-gist:
     name: Update Gist with Latest Tag
@@ -71,11 +97,11 @@ jobs:
             -X PATCH \
             -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
             -d "{\"files\": {\"${{ env.GIST_FILE }}\": {\"content\": \"${{ needs.check-autoscaler.outputs.latest }}\"}}}" \
-            https://api.github.com/gists/${{ secrets.GIST_ID }}
+            https://api.github.com/gists/${{ needs.check-autoscaler.outputs.gist_id }}
 
       - name: Confirm gist updated
         run: |
           curl -s \
             -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
-            https://api.github.com/gists/${{ secrets.GIST_ID }} \
+            https://api.github.com/gists/${{ needs.check-autoscaler.outputs.gist_id }} \
             | jq -r '.files["${{ env.GIST_FILE }}"].content'
