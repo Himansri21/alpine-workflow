@@ -1,0 +1,81 @@
+name: Monitor Cluster Autoscaler Version (Gist Test)
+
+on:
+  workflow_dispatch: # manual trigger for testing
+  # uncomment below if you want it scheduled daily
+  # schedule:
+  #   - cron: "0 3 * * *" # runs daily at 03:00 UTC
+
+env:
+  GIST_FILE: previous_autoscaler_tag.txt
+
+jobs:
+  check-autoscaler:
+    name: Check Cluster Autoscaler Version
+    runs-on: ubuntu-latest
+
+    outputs:
+      latest: ${{ steps.get_latest.outputs.latest }}
+      previous: ${{ steps.get_previous.outputs.previous }}
+      notify: ${{ steps.decide.outputs.notify }}
+
+    steps:
+      - name: Get latest cluster-autoscaler tag
+        id: get_latest
+        run: |
+          latest_tag=$(curl -s https://api.github.com/repos/kubernetes/autoscaler/releases | \
+            jq -r '.[].tag_name' | \
+            grep -E '^cluster-autoscaler-[0-9]+\.[0-9]+\.[0-9]+$' | \
+            sort -V | \
+            tail -n1)
+          echo "latest=$latest_tag" >> $GITHUB_OUTPUT
+
+      - name: Get previous version from gist
+        id: get_previous
+        run: |
+          previous_tag=$(curl -s \
+            -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
+            https://api.github.com/gists/${{ secrets.GIST_ID }} \
+            | jq -r '.files["${{ env.GIST_FILE }}"].content')
+
+          if [[ -z "$previous_tag" || "$previous_tag" == "null" ]]; then
+            previous_tag="0"
+          fi
+          echo "previous=$previous_tag" >> $GITHUB_OUTPUT
+
+      - name: Decide if update needed
+        id: decide
+        run: |
+          if [[ "${{ steps.get_latest.outputs.latest }}" != "${{ steps.get_previous.outputs.previous }}" ]]; then
+            echo "notify=true" >> $GITHUB_OUTPUT
+          else
+            echo "notify=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Show debug info
+        run: |
+          echo "Latest tag: ${{ steps.get_latest.outputs.latest }}"
+          echo "Previous tag: ${{ steps.get_previous.outputs.previous }}"
+          echo "Notify: ${{ steps.decide.outputs.notify }}"
+
+  update-gist:
+    name: Update Gist with Latest Tag
+    needs: check-autoscaler
+    if: needs.check-autoscaler.outputs.notify == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Update gist file
+        run: |
+          curl -s \
+            -X PATCH \
+            -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
+            -d "{\"files\": {\"${{ env.GIST_FILE }}\": {\"content\": \"${{ needs.check-autoscaler.outputs.latest }}\"}}}" \
+            https://api.github.com/gists/${{ secrets.GIST_ID }}
+
+      - name: Confirm gist updated
+        run: |
+          curl -s \
+            -H "Authorization: token ${{ secrets.GIST_TOKEN }}" \
+            https://api.github.com/gists/${{ secrets.GIST_ID }} \
+            | jq -r '.files["${{ env.GIST_FILE }}"].content'
